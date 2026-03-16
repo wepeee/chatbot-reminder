@@ -1,0 +1,229 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum task_status {
+  pending
+  completed
+  cancelled
+  overdue
+
+  @@map("task_status")
+}
+
+enum item_source {
+  discord
+  dashboard
+
+  @@map("item_source")
+}
+
+enum entity_type {
+  task
+  event
+  reminder
+  custom
+
+  @@map("entity_type")
+}
+
+enum recurrence_frequency {
+  daily
+  weekly
+  monthly
+  custom
+
+  @@map("recurrence_frequency")
+}
+
+enum reminder_type {
+  one_time
+  recurring
+
+  @@map("reminder_type")
+}
+
+enum reminder_status {
+  pending
+  sent
+  failed
+  cancelled
+
+  @@map("reminder_status")
+}
+
+enum message_direction {
+  inbound
+  outbound
+
+  @@map("message_direction")
+}
+
+enum message_channel {
+  discord
+
+  @@map("message_channel")
+}
+
+enum processing_status {
+  received
+  parsed
+  needs_clarification
+  processed
+  failed
+
+  @@map("processing_status")
+}
+
+enum holiday_type {
+  national
+  joint_leave
+  observance
+
+  @@map("holiday_type")
+}
+
+model User {
+  id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  full_name       String
+  discord_user_id String?          @unique
+  timezone        String           @default("Asia/Jakarta")
+  created_at      DateTime         @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime         @updatedAt @db.Timestamptz(6)
+  tasks           Task[]
+  events          Event[]
+  reminders       Reminder[]
+  recurrences     RecurrenceRule[]
+  raw_messages    RawMessage[]
+
+  @@map("users")
+}
+
+model Task {
+  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id     String      @db.Uuid
+  title       String
+  description String?
+  due_at      DateTime    @db.Timestamptz(6)
+  status      task_status @default(pending)
+  source      item_source @default(dashboard)
+  raw_input   String?
+  created_at  DateTime    @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime    @updatedAt @db.Timestamptz(6)
+  user        User        @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id, due_at], map: "idx_tasks_user_due_at")
+  @@index([status], map: "idx_tasks_status")
+  @@map("tasks")
+}
+
+model Event {
+  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id     String      @db.Uuid
+  title       String
+  description String?
+  start_at    DateTime    @db.Timestamptz(6)
+  end_at      DateTime?   @db.Timestamptz(6)
+  location    String?
+  source      item_source @default(dashboard)
+  raw_input   String?
+  created_at  DateTime    @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime    @updatedAt @db.Timestamptz(6)
+  user        User        @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id, start_at], map: "idx_events_user_start_at")
+  @@map("events")
+}
+
+model RecurrenceRule {
+  id             String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id        String               @db.Uuid
+  entity_type    entity_type
+  entity_id      String?              @db.Uuid
+  frequency      recurrence_frequency
+  interval_value Int                  @default(1)
+  by_day         String[]             @default([])
+  by_month_day   Int[]                @default([])
+  start_date     DateTime             @db.Date
+  end_date       DateTime?            @db.Date
+  raw_rule_text  String?
+  created_at     DateTime             @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime             @updatedAt @db.Timestamptz(6)
+  user           User                 @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id], map: "idx_recurrence_rules_user")
+  @@map("recurrence_rules")
+}
+
+model Reminder {
+  id               String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id          String          @db.Uuid
+  entity_type      entity_type
+  entity_id        String?         @db.Uuid
+  reminder_type    reminder_type   @default(one_time)
+  remind_at        DateTime        @db.Timestamptz(6)
+  status           reminder_status @default(pending)
+  channel          message_channel @default(discord)
+  message_template String
+  created_at       DateTime        @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime        @updatedAt @db.Timestamptz(6)
+  user             User            @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id, status, remind_at], map: "idx_reminders_user_status_remind_at")
+  @@map("reminders")
+}
+
+model RawMessage {
+  id                String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id           String?           @db.Uuid
+  direction         message_direction
+  channel           message_channel   @default(discord)
+  message_text      String?
+  payload_json      Json
+  parsed_json       Json?
+  processing_status processing_status @default(received)
+  created_at        DateTime          @default(now()) @db.Timestamptz(6)
+  user              User?             @relation(fields: [user_id], references: [id], onDelete: SetNull)
+
+  @@index([created_at(sort: Desc)], map: "idx_raw_messages_created_at")
+  @@map("raw_messages")
+}
+
+model Holiday {
+  id         String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  date       DateTime     @db.Date
+  name       String
+  local_name String?
+  type       holiday_type @default(national)
+  source     String       @default("nager")
+  created_at DateTime     @default(now()) @db.Timestamptz(6)
+  updated_at DateTime     @updatedAt @db.Timestamptz(6)
+
+  @@unique([date, name], map: "idx_holidays_date_name_unique")
+  @@index([date], map: "idx_holidays_date")
+  @@map("holidays")
+}
+
+
+model AiUsageEvent {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id           String?  @db.Uuid
+  provider          String
+  model             String
+  request_type      String
+  prompt_tokens     Int
+  completion_tokens Int
+  total_tokens      Int
+  created_at        DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([created_at(sort: Desc)], map: "idx_ai_usage_events_created_at")
+  @@index([provider, model, created_at], map: "idx_ai_usage_events_provider_model_created_at")
+  @@map("ai_usage_events")
+}
+
