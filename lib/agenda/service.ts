@@ -9,6 +9,10 @@ export interface AgendaItem {
   status?: string;
 }
 
+type AgendaRangeData = Awaited<ReturnType<typeof fetchTodayAndWeekData>>;
+type AgendaTask = AgendaRangeData["tasks"][number];
+type AgendaEvent = AgendaRangeData["events"][number];
+
 export async function getAgendaByDayOffset(userId: string, dayOffset: number) {
   const startISO = toJakartaBoundaryISO(new Date(), dayOffset);
   const endISO = toJakartaBoundaryISO(new Date(), dayOffset + 1);
@@ -16,14 +20,14 @@ export async function getAgendaByDayOffset(userId: string, dayOffset: number) {
   const { tasks, events } = await fetchTodayAndWeekData({ userId, startISO, endISO });
 
   const items: AgendaItem[] = [
-    ...tasks.map((task) => ({
+    ...tasks.map((task: AgendaTask) => ({
       id: task.id,
       type: "task" as const,
       title: task.title,
       at: task.due_at,
       status: task.status,
     })),
-    ...events.map((event) => ({
+    ...events.map((event: AgendaEvent) => ({
       id: event.id,
       type: "event" as const,
       title: event.title,
@@ -49,14 +53,14 @@ export async function getWeekAgenda(userId: string) {
   const { tasks, events } = await fetchTodayAndWeekData({ userId, startISO, endISO });
 
   const items: AgendaItem[] = [
-    ...tasks.map((task) => ({
+    ...tasks.map((task: AgendaTask) => ({
       id: task.id,
       type: "task" as const,
       title: task.title,
       at: task.due_at,
       status: task.status,
     })),
-    ...events.map((event) => ({
+    ...events.map((event: AgendaEvent) => ({
       id: event.id,
       type: "event" as const,
       title: event.title,

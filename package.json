@@ -14,7 +14,8 @@
     "prisma:seed": "pnpm dlx tsx prisma/seed.ts",
     "discord:bot": "tsx scripts/discord-gateway-bot.ts",
     "parser:test": "tsx scripts/test-parser.ts",
-    "benchmark:nlp": "tsx scripts/benchmark-nlp.ts"
+    "benchmark:nlp": "tsx scripts/benchmark-nlp.ts",
+    "postinstall": "prisma generate"
   },
   "dependencies": {
     "@prisma/client": "^6.5.0",
@@ -54,5 +55,3 @@
     "seed": "pnpm dlx tsx prisma/seed.ts"
   }
 }
-
-
