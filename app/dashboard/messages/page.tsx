@@ -7,6 +7,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { listDashboardData } from "@/lib/services/data-service";
 import { getCurrentSessionUser } from "@/lib/services/session-user";
 
+import type { RawMessage } from "@/types/domain";
+
 export default async function MessagesPage() {
   const user = await getCurrentSessionUser();
   if (!user) {
@@ -35,7 +37,7 @@ export default async function MessagesPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {data.rawMessages.map((message) => (
+                {data.rawMessages.map((message: RawMessage) => (
                   <TableRow key={message.id}>
                     <TableCell>{new Date(message.created_at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}</TableCell>
                     <TableCell>{message.direction}</TableCell>
@@ -56,3 +58,5 @@ export default async function MessagesPage() {
     </Card>
   );
 }
+
+
