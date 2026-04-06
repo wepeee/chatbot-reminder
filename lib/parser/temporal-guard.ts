@@ -271,6 +271,15 @@ export function enforceParsedTemporalConsistency(input: {
   const dateParts = getDatePartsInTimezone(referenceDate, input.timezone);
   const now = input.now ?? new Date();
 
+  if (referenceDate.getTime() <= now.getTime()) {
+    const requested = formatDateTimeLabel(referenceDate, input.timezone);
+    const current = formatDateTimeLabel(now, input.timezone);
+    return withClarification(
+      input.parsed,
+      `Waktu ${requested} sudah lewat dari sekarang (${current}). Mau dijadwalkan ke kapan?`,
+    );
+  }
+
   const absoluteHint = extractAbsoluteDateHint(input.normalizedText);
   if (absoluteHint) {
     const sameDayMonth =

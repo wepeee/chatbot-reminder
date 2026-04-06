@@ -21,8 +21,8 @@ import {
   createTask,
   deleteEvent,
   deleteTask,
-  findEventByTitle,
-  findTaskByTitle,
+  findEventsByTitle,
+  findTasksByTitle,
   getLatestInboundPendingClarification,
   ensureUserByDiscord,
   logInboundRawMessage,
@@ -158,13 +158,18 @@ function missingFieldQuestion(parsed: ParsedMessage) {
   return "Mohon perjelas detail jadwalnya ya.";
 }
 
+function formatDateTimeInTimezone(iso: string, timezone: string) {
+  return new Date(iso).toLocaleString("id-ID", { timeZone: timezone });
+}
+
 function buildConfirmationText(
   parsed: ParsedMessage,
   refTitle: string,
+  timezone: string,
   refTimeISO?: string | null,
 ) {
   const timeInfo = refTimeISO
-    ? `\nWaktu: ${new Date(refTimeISO).toLocaleString("id-ID", { timeZone: "Asia/Jakarta" })}`
+    ? `\nWaktu: ${formatDateTimeInTimezone(refTimeISO, timezone)}`
     : "";
 
   switch (parsed.intent) {
@@ -183,6 +188,30 @@ function buildConfirmationText(
   }
 }
 
+type MatchedItemCandidate = {
+  kind: "task" | "event";
+  id: string;
+  title: string;
+  atISO: string;
+};
+
+function buildAmbiguousItemQuestion(input: {
+  referenceText: string;
+  timezone: string;
+  candidates: MatchedItemCandidate[];
+}) {
+  const items = input.candidates.slice(0, 5).map((item, index) => {
+    const kindLabel = item.kind === "task" ? "Tugas" : "Event";
+    const whenLabel = formatDateTimeInTimezone(item.atISO, input.timezone);
+    return `${index + 1}. [${kindLabel}] ${item.title} (${whenLabel})`;
+  });
+
+  return [
+    `Aku nemu beberapa item yang mirip dengan "${input.referenceText}":`,
+    ...items,
+    "Balas dengan judul yang paling tepat supaya aku tidak salah aksi.",
+  ].join("\n");
+}
 function toParsedMessage(value: unknown): ParsedMessage | null {
   const result = parsedMessageSchema.safeParse(value);
   return result.success ? result.data : null;
@@ -567,7 +596,7 @@ export async function receiveIncomingChatMessage(input: IncomingChatTextInput) {
       offsets: parsed.reminder_offsets,
     });
 
-    const text = buildConfirmationText(parsed, task.title, task.due_at);
+    const text = buildConfirmationText(parsed, task.title, user.timezone, task.due_at);
     await sendAndLog({
       userId: user.id,
       channel: input.channel,
@@ -610,7 +639,7 @@ export async function receiveIncomingChatMessage(input: IncomingChatTextInput) {
       offsets: parsed.reminder_offsets,
     });
 
-    const text = buildConfirmationText(parsed, event.title, event.start_at);
+    const text = buildConfirmationText(parsed, event.title, user.timezone, event.start_at);
     await sendAndLog({
       userId: user.id,
       channel: input.channel,
@@ -676,7 +705,7 @@ export async function receiveIncomingChatMessage(input: IncomingChatTextInput) {
       });
     }
 
-    const text = buildConfirmationText(parsed, parsed.title, startAt);
+    const text = buildConfirmationText(parsed, parsed.title, user.timezone, startAt);
     await sendAndLog({
       userId: user.id,
       channel: input.channel,
@@ -720,27 +749,108 @@ export async function receiveIncomingChatMessage(input: IncomingChatTextInput) {
       return { status: "needs_clarification" as const, parsed };
     }
 
-    const task = await findTaskByTitle(user.id, ref);
-    if (task) {
+    const [taskMatches, eventMatches] = await Promise.all([
+      findTasksByTitle(user.id, ref),
+      findEventsByTitle(user.id, ref),
+    ]);
+
+    const candidates: MatchedItemCandidate[] = [
+      ...taskMatches.map((task) => ({
+        kind: "task" as const,
+        id: task.id,
+        title: task.title,
+        atISO: task.due_at,
+      })),
+      ...eventMatches.map((event) => ({
+        kind: "event" as const,
+        id: event.id,
+        title: event.title,
+        atISO: event.start_at,
+      })),
+    ];
+
+    if (candidates.length === 0) {
+      const notFound =
+        "Aku belum menemukan item yang dimaksud. Coba sebutkan judul persisnya ya.";
+      await sendAndLog({
+        userId: user.id,
+        channel: input.channel,
+        to: input.from,
+        text: notFound,
+        sendText: input.sendText,
+        parsed,
+        status: "needs_clarification",
+      });
+      await updateRawMessageProcessing({
+        id: inboundRawMessageId,
+        parsed,
+        status: "needs_clarification",
+      });
+      return { status: "needs_clarification" as const, parsed };
+    }
+
+    if (candidates.length > 1) {
+      const question = buildAmbiguousItemQuestion({
+        referenceText: ref,
+        timezone: user.timezone,
+        candidates,
+      });
+      await sendAndLog({
+        userId: user.id,
+        channel: input.channel,
+        to: input.from,
+        text: question,
+        sendText: input.sendText,
+        parsed,
+        status: "needs_clarification",
+      });
+      await updateRawMessageProcessing({
+        id: inboundRawMessageId,
+        parsed,
+        status: "needs_clarification",
+      });
+      return { status: "needs_clarification" as const, parsed };
+    }
+
+    const candidate = candidates[0];
+    if (candidate.kind === "task") {
       const patch: Record<string, unknown> = {};
-      if (typeof parsed.updates.title === "string")
-        patch.title = parsed.updates.title;
+      if (typeof parsed.updates.title === "string") patch.title = parsed.updates.title;
       if (
         typeof parsed.updates.description === "string" ||
         parsed.updates.description === null
-      )
+      ) {
         patch.description = parsed.updates.description;
-      if (typeof parsed.updates.due_at === "string")
-        patch.due_at = parsed.updates.due_at;
-      if (typeof parsed.updates.status === "string")
-        patch.status = parsed.updates.status;
+      }
+      if (typeof parsed.updates.due_at === "string") patch.due_at = parsed.updates.due_at;
+      if (typeof parsed.updates.status === "string") patch.status = parsed.updates.status;
+
+      if (Object.keys(patch).length === 0) {
+        const question =
+          "Perubahan untuk item itu belum kebaca. Sebutkan field yang mau diubah, misalnya judul, deadline, atau status.";
+        await sendAndLog({
+          userId: user.id,
+          channel: input.channel,
+          to: input.from,
+          text: question,
+          sendText: input.sendText,
+          parsed,
+          status: "needs_clarification",
+        });
+        await updateRawMessageProcessing({
+          id: inboundRawMessageId,
+          parsed,
+          status: "needs_clarification",
+        });
+        return { status: "needs_clarification" as const, parsed };
+      }
 
       const updated = await updateTask({
         userId: user.id,
-        taskId: task.id,
+        taskId: candidate.id,
         patch,
       });
-      const text = buildConfirmationText(parsed, updated.title);
+      const text = buildConfirmationText(parsed, updated.title, user.timezone);
       await sendAndLog({
         userId: user.id,
         channel: input.channel,
@@ -762,75 +872,68 @@ export async function receiveIncomingChatMessage(input: IncomingChatTextInput) {
       };
     }
 
-    const event = await findEventByTitle(user.id, ref);
-    if (event) {
-      const patch: Record<string, unknown> = {};
-      if (typeof parsed.updates.title === "string")
-        patch.title = parsed.updates.title;
-      if (
-        typeof parsed.updates.description === "string" ||
-        parsed.updates.description === null
-      )
-        patch.description = parsed.updates.description;
-      if (typeof parsed.updates.start_at === "string")
-        patch.start_at = parsed.updates.start_at;
-      if (
-        typeof parsed.updates.end_at === "string" ||
-        parsed.updates.end_at === null
-      )
-        patch.end_at = parsed.updates.end_at;
-      if (
-        typeof parsed.updates.location === "string" ||
-        parsed.updates.location === null
-      )
-        patch.location = parsed.updates.location;
+    const patch: Record<string, unknown> = {};
+    if (typeof parsed.updates.title === "string") patch.title = parsed.updates.title;
+    if (
+      typeof parsed.updates.description === "string" ||
+      parsed.updates.description === null
+    ) {
+      patch.description = parsed.updates.description;
+    }
+    if (typeof parsed.updates.start_at === "string") patch.start_at = parsed.updates.start_at;
+    if (typeof parsed.updates.end_at === "string" || parsed.updates.end_at === null) {
+      patch.end_at = parsed.updates.end_at;
+    }
+    if (typeof parsed.updates.location === "string" || parsed.updates.location === null) {
+      patch.location = parsed.updates.location;
+    }
 
-      const updated = await updateEvent({
-        userId: user.id,
-        eventId: event.id,
-        patch,
-      });
-      const text = buildConfirmationText(parsed, updated.title);
+    if (Object.keys(patch).length === 0) {
+      const question =
+        "Perubahan untuk item itu belum kebaca. Sebutkan field yang mau diubah, misalnya judul, jam mulai, atau lokasi.";
       await sendAndLog({
         userId: user.id,
         channel: input.channel,
         to: input.from,
-        text,
+        text: question,
         sendText: input.sendText,
         parsed,
+        status: "needs_clarification",
       });
       await updateRawMessageProcessing({
         id: inboundRawMessageId,
         parsed,
-        status: "processed",
+        status: "needs_clarification",
       });
-      return {
-        status: "processed" as const,
-        parsed,
-        action: "update_event" as const,
-        entity: updated,
-      };
+      return { status: "needs_clarification" as const, parsed };
     }
 
-    const notFound =
-      "Aku belum menemukan item yang dimaksud. Coba sebutkan judul persisnya ya.";
+    const updated = await updateEvent({
+      userId: user.id,
+      eventId: candidate.id,
+      patch,
+    });
+    const text = buildConfirmationText(parsed, updated.title, user.timezone);
     await sendAndLog({
       userId: user.id,
       channel: input.channel,
       to: input.from,
-      text: notFound,
+      text,
       sendText: input.sendText,
       parsed,
-      status: "needs_clarification",
     });
     await updateRawMessageProcessing({
       id: inboundRawMessageId,
       parsed,
-      status: "needs_clarification",
+      status: "processed",
     });
-    return { status: "needs_clarification" as const, parsed };
+    return {
+      status: "processed" as const,
+      parsed,
+      action: "update_event" as const,
+      entity: updated,
+    };
   }
-
   if (parsed.intent === "delete_item") {
     const ref = parsed.target_reference ?? parsed.title;
     if (!ref) {
@@ -853,10 +956,73 @@ export async function receiveIncomingChatMessage(input: IncomingChatTextInput) {
       return { status: "needs_clarification" as const, parsed };
     }
 
-    const task = await findTaskByTitle(user.id, ref);
-    if (task) {
-      await deleteTask({ userId: user.id, taskId: task.id });
-      const text = buildConfirmationText(parsed, task.title);
+    const [taskMatches, eventMatches] = await Promise.all([
+      findTasksByTitle(user.id, ref),
+      findEventsByTitle(user.id, ref),
+    ]);
+
+    const candidates: MatchedItemCandidate[] = [
+      ...taskMatches.map((task) => ({
+        kind: "task" as const,
+        id: task.id,
+        title: task.title,
+        atISO: task.due_at,
+      })),
+      ...eventMatches.map((event) => ({
+        kind: "event" as const,
+        id: event.id,
+        title: event.title,
+        atISO: event.start_at,
+      })),
+    ];
+
+    if (candidates.length === 0) {
+      const notFound =
+        "Aku belum menemukan item yang dimaksud. Coba sebutkan judul persisnya ya.";
+      await sendAndLog({
+        userId: user.id,
+        channel: input.channel,
+        to: input.from,
+        text: notFound,
+        sendText: input.sendText,
+        parsed,
+        status: "needs_clarification",
+      });
+      await updateRawMessageProcessing({
+        id: inboundRawMessageId,
+        parsed,
+        status: "needs_clarification",
+      });
+      return { status: "needs_clarification" as const, parsed };
+    }
+
+    if (candidates.length > 1) {
+      const question = buildAmbiguousItemQuestion({
+        referenceText: ref,
+        timezone: user.timezone,
+        candidates,
+      });
+      await sendAndLog({
+        userId: user.id,
+        channel: input.channel,
+        to: input.from,
+        text: question,
+        sendText: input.sendText,
+        parsed,
+        status: "needs_clarification",
+      });
+      await updateRawMessageProcessing({
+        id: inboundRawMessageId,
+        parsed,
+        status: "needs_clarification",
+      });
+      return { status: "needs_clarification" as const, parsed };
+    }
+
+    const candidate = candidates[0];
+    if (candidate.kind === "task") {
+      await deleteTask({ userId: user.id, taskId: candidate.id });
+      const text = buildConfirmationText(parsed, candidate.title, user.timezone);
       await sendAndLog({
         userId: user.id,
         channel: input.channel,
@@ -877,49 +1043,27 @@ export async function receiveIncomingChatMessage(input: IncomingChatTextInput) {
       };
     }
 
-    const event = await findEventByTitle(user.id, ref);
-    if (event) {
-      await deleteEvent({ userId: user.id, eventId: event.id });
-      const text = buildConfirmationText(parsed, event.title);
-      await sendAndLog({
-        userId: user.id,
-        channel: input.channel,
-        to: input.from,
-        text,
-        sendText: input.sendText,
-        parsed,
-      });
-      await updateRawMessageProcessing({
-        id: inboundRawMessageId,
-        parsed,
-        status: "processed",
-      });
-      return {
-        status: "processed" as const,
-        parsed,
-        action: "delete_event" as const,
-      };
-    }
-
-    const notFound =
-      "Aku belum menemukan item yang dimaksud. Coba sebutkan judul persisnya ya.";
+    await deleteEvent({ userId: user.id, eventId: candidate.id });
+    const text = buildConfirmationText(parsed, candidate.title, user.timezone);
     await sendAndLog({
       userId: user.id,
       channel: input.channel,
       to: input.from,
-      text: notFound,
+      text,
       sendText: input.sendText,
       parsed,
-      status: "needs_clarification",
     });
     await updateRawMessageProcessing({
       id: inboundRawMessageId,
       parsed,
-      status: "needs_clarification",
+      status: "processed",
     });
-    return { status: "needs_clarification" as const, parsed };
+    return {
+      status: "processed" as const,
+      parsed,
+      action: "delete_event" as const,
+    };
   }
-
   await sendAndLog({
     userId: user.id,
     channel: input.channel,

@@ -710,7 +710,16 @@ export async function listDashboardData(userId: string) {
 }
 
 export async function findTaskByTitle(userId: string, titleLike: string) {
-  const data = await prisma.task.findFirst({
+  const [first] = await findTasksByTitle(userId, titleLike, 1);
+  return first ?? null;
+}
+
+export async function findTasksByTitle(
+  userId: string,
+  titleLike: string,
+  limit = 5,
+) {
+  const data = await prisma.task.findMany({
     where: {
       user_id: userId,
       title: {
@@ -719,13 +728,23 @@ export async function findTaskByTitle(userId: string, titleLike: string) {
       },
     },
     orderBy: { updated_at: "desc" },
+    take: limit,
   });
 
-  return data ? serializeTask(data) : null;
+  return data.map(serializeTask);
 }
 
 export async function findEventByTitle(userId: string, titleLike: string) {
-  const data = await prisma.event.findFirst({
+  const [first] = await findEventsByTitle(userId, titleLike, 1);
+  return first ?? null;
+}
+
+export async function findEventsByTitle(
+  userId: string,
+  titleLike: string,
+  limit = 5,
+) {
+  const data = await prisma.event.findMany({
     where: {
       user_id: userId,
       title: {
@@ -734,9 +753,10 @@ export async function findEventByTitle(userId: string, titleLike: string) {
       },
     },
     orderBy: { updated_at: "desc" },
+    take: limit,
   });
 
-  return data ? serializeEvent(data) : null;
+  return data.map(serializeEvent);
 }
 
 export async function updateUser(input: {

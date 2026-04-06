@@ -1,5 +1,5 @@
 ﻿import { loadEnvConfig } from "@next/env";
-import { ChannelType, Client, Events, GatewayIntentBits, Partials } from "discord.js";
+import { ChannelType, Client, Events, GatewayIntentBits, Partials, type Message } from "discord.js";
 
 loadEnvConfig(process.cwd());
 
@@ -79,6 +79,22 @@ async function pingInternalApi() {
   const timezone = json.data?.timezone ?? "unknown-timezone";
   const model = json.data?.ai_model ?? "unknown-model";
   console.log(`[discord-bot] API health OK: service=${service}, timezone=${timezone}, model=${model}`);
+}
+
+
+const DISCORD_MESSAGE_LIMIT = 2000;
+
+function fitDiscordMessage(text: string) {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) {
+    return "";
+  }
+
+  if (trimmed.length <= DISCORD_MESSAGE_LIMIT) {
+    return trimmed;
+  }
+
+  return `${trimmed.slice(0, DISCORD_MESSAGE_LIMIT - 3)}...`;
 }
 
 async function processMessage(input: { from: string; text: string; rawPayload: Record<string, unknown> }) {
@@ -196,8 +212,10 @@ client.on(Events.MessageCreate, async (message) => {
     return;
   }
 
+  let pendingReply: Message | null = null;
+
   try {
-    await message.channel.sendTyping();
+    pendingReply = await message.reply("Thinking...");
 
     const replyText = await processMessage({
       from: message.author.id,
@@ -213,13 +231,18 @@ client.on(Events.MessageCreate, async (message) => {
       }
     });
 
-    if (replyText.trim().length > 0) {
-      await message.reply(replyText);
-    }
+    const finalReply = fitDiscordMessage(replyText) || "Perintah sudah diproses.";
+    await pendingReply.edit(finalReply);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
     console.error("[discord-bot] message processing failed:", errorMessage);
-    await message.reply("Maaf, lagi ada kendala saat memproses pesanmu.");
+
+    const fallbackReply = "Maaf, lagi ada kendala saat memproses pesanmu.";
+    if (pendingReply) {
+      await pendingReply.edit(fallbackReply);
+    } else {
+      await message.reply(fallbackReply);
+    }
   }
 });
 
