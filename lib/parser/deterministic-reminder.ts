@@ -55,6 +55,35 @@ function toJakartaIso(ymd: { year: number; month: number; day: number }, hour: s
   return `${ymd.year}-${month}-${day}T${hour}:${minute}:00+07:00`;
 }
 
+function parseReminderClock(lower: string) {
+  const match = lower.match(/\bjam\s*(\d{1,2})(?:[.:](\d{1,2}))?(?:\s*(pagi|siang|sore|malam))?\b/i);
+  if (!match) {
+    return null;
+  }
+
+  const rawHour = Number.parseInt(match[1], 10);
+  const minute = Number.parseInt(match[2] ?? "0", 10);
+  const period = (match[3] ?? "").toLowerCase();
+
+  if (Number.isNaN(rawHour) || Number.isNaN(minute) || rawHour < 0 || rawHour > 23 || minute < 0 || minute > 59) {
+    return null;
+  }
+
+  let hour = rawHour;
+  if (period === "pagi" && hour === 12) hour = 0;
+  if (period === "siang" && hour >= 1 && hour <= 10) hour += 12;
+  if (period === "sore" && hour >= 1 && hour <= 11) hour += 12;
+  if (period === "malam") {
+    if (hour === 12) hour = 0;
+    else if (hour >= 1 && hour <= 11) hour += 12;
+  }
+
+  return {
+    hour: String(hour).padStart(2, "0"),
+    minute: String(minute).padStart(2, "0"),
+  };
+}
+
 function resolveReminderDateYmd(lower: string, now = new Date()) {
   const today = getJakartaTodayYmd(now);
 
@@ -100,20 +129,14 @@ function resolveReminderDateYmd(lower: string, now = new Date()) {
 export function parseDeterministicReminder(normalizedText: string, timezone: string): ParsedMessage | null {
   const lower = normalizedText.toLowerCase();
   const hasReminderVerb = /(?:ingetin|ingatkan|remind|kirim aku chat|kirim chat|kirim pesan|ping)/i.test(lower);
-  const clockMatch = lower.match(/\bjam\s*(\d{1,2})[.:](\d{2})\b/i);
+  const clock = parseReminderClock(lower);
 
-  if (!hasReminderVerb || !clockMatch) {
+  if (!hasReminderVerb || !clock) {
     return null;
   }
 
-  const hourNum = Number.parseInt(clockMatch[1], 10);
-  const minuteNum = Number.parseInt(clockMatch[2], 10);
-  if (Number.isNaN(hourNum) || Number.isNaN(minuteNum) || hourNum > 23 || minuteNum > 59) {
-    return null;
-  }
-
-  const hour = String(hourNum).padStart(2, "0");
-  const minute = String(minuteNum).padStart(2, "0");
+  const hour = clock.hour;
+  const minute = clock.minute;
   const ymd = resolveReminderDateYmd(lower);
   const quoted = normalizedText.match(/"(.+?)"/)?.[1]?.trim() ?? null;
   const title = quoted ? `Pengingat: ${quoted}` : "Pengingat Chat";

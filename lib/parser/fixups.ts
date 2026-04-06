@@ -373,7 +373,8 @@ export function applyParsedFixups(input: {
   }
   const hasRelativeDateAnchor =
     /\bhari\s+ini\b|\bbesok\b|\blusa\b/.test(lower) ||
-    /\b\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{2,4})?\b/.test(lower);
+    /\b\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{2,4})?\b/.test(lower) ||
+    /\b(?:tanggal|tgl)?\s*\d{1,2}\s+(?:januari|jan|februari|feb|maret|mar|april|apr|mei|juni|jun|juli|jul|agustus|agu|agt|agst|september|sep|oktober|okt|november|nov|desember|des)(?:\s+\d{4})?\b/.test(lower);
   const clock = inferClockFromText(lower);
 
   if (
@@ -398,4 +399,5 @@ export function applyParsedFixups(input: {
 
   return parsed;
 }
+
 
