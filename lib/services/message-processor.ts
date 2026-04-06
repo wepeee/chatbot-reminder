@@ -239,6 +239,28 @@ function parseClock(input: string) {
   return { hour, minute };
 }
 
+function normalizeDateOnly(input: string | null | undefined) {
+  if (typeof input !== "string") {
+    return null;
+  }
+
+  const trimmed = input.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const dateOnly = new Date(`${trimmed}T00:00:00.000Z`);
+    return Number.isNaN(dateOnly.getTime()) ? null : trimmed;
+  }
+
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  return parsed.toISOString().slice(0, 10);
+}
 function getDatePartsInTimezone(date: Date, timezone: string) {
   const formatter = new Intl.DateTimeFormat("en-CA", {
     timeZone: timezone,
@@ -691,6 +713,12 @@ export async function receiveIncomingChatMessage(input: IncomingChatTextInput) {
     });
 
     if (parsed.recurrence?.frequency) {
+      const recurrenceStartDate =
+        normalizeDateOnly(parsed.recurrence.start_date) ??
+        normalizeDateOnly(startAt) ??
+        startAt.slice(0, 10);
+      const recurrenceEndDate = normalizeDateOnly(parsed.recurrence.end_date);
+
       await createRecurrenceRule({
         userId: user.id,
         entityType: "reminder",
@@ -699,12 +727,11 @@ export async function receiveIncomingChatMessage(input: IncomingChatTextInput) {
         intervalValue: parsed.recurrence.interval_value ?? 1,
         byDay: parsed.recurrence.by_day ?? null,
         byMonthDay: parsed.recurrence.by_month_day ?? null,
-        startDate: parsed.recurrence.start_date ?? startAt.slice(0, 10),
-        endDate: parsed.recurrence.end_date ?? null,
+        startDate: recurrenceStartDate,
+        endDate: recurrenceEndDate,
         rawRuleText: parsed.recurrence.raw_rule_text ?? input.text,
       });
     }
-
     const text = buildConfirmationText(parsed, parsed.title, user.timezone, startAt);
     await sendAndLog({
       userId: user.id,

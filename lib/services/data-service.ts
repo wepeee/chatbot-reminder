@@ -108,6 +108,25 @@ function toDateOnly(value: Date | null | undefined) {
   return value.toISOString().slice(0, 10);
 }
 
+function parseDateOnlyToUtcDate(input: string) {
+  const trimmed = input.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const parsedDateOnly = new Date(`${trimmed}T00:00:00.000Z`);
+    return Number.isNaN(parsedDateOnly.getTime()) ? null : parsedDateOnly;
+  }
+
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  const isoDateOnly = parsed.toISOString().slice(0, 10);
+  return new Date(`${isoDateOnly}T00:00:00.000Z`);
+}
 function serializeTask(row: {
   id: string;
   user_id: string;
@@ -548,6 +567,13 @@ export async function createRecurrenceRule(input: {
   endDate?: string | null;
   rawRuleText?: string | null;
 }) {
+  const startDate = parseDateOnlyToUtcDate(input.startDate);
+  if (!startDate) {
+    throw new Error("Invalid recurrence start_date. Expected YYYY-MM-DD or parseable date string.");
+  }
+
+  const endDate = input.endDate ? parseDateOnlyToUtcDate(input.endDate) : null;
+
   const data = await prisma.recurrenceRule.create({
     data: {
       user_id: input.userId,
@@ -557,10 +583,8 @@ export async function createRecurrenceRule(input: {
       interval_value: input.intervalValue ?? 1,
       by_day: input.byDay ?? [],
       by_month_day: input.byMonthDay ?? [],
-      start_date: new Date(`${input.startDate}T00:00:00.000Z`),
-      end_date: input.endDate
-        ? new Date(`${input.endDate}T00:00:00.000Z`)
-        : null,
+      start_date: startDate,
+      end_date: endDate,
       raw_rule_text: input.rawRuleText ?? null,
     },
   });
