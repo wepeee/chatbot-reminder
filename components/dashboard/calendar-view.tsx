@@ -7,7 +7,6 @@ import {
   endOfMonth,
   endOfWeek,
   format,
-  isSameDay,
   isSameMonth,
   startOfMonth,
   startOfWeek,
@@ -81,6 +80,23 @@ export function DashboardCalendarView({
     return map;
   }, [holidays]);
 
+  const itemMap = useMemo(() => {
+    const map = new Map<string, CalendarItem[]>();
+
+    for (const item of items) {
+      const itemDate = new Date(item.at);
+      if (Number.isNaN(itemDate.getTime())) {
+        continue;
+      }
+
+      const key = toJakartaDateKey(itemDate);
+      const list = map.get(key) ?? [];
+      list.push(item);
+      map.set(key, list);
+    }
+
+    return map;
+  }, [items]);
   const monthDays = useMemo(() => {
     const start = startOfWeek(startOfMonth(referenceDate), { weekStartsOn: 1 });
     const end = endOfWeek(endOfMonth(referenceDate), { weekStartsOn: 1 });
@@ -147,10 +163,10 @@ export function DashboardCalendarView({
 
         <div className="mt-2 grid grid-cols-7 gap-2">
           {days.map((day) => {
-            const dayItems = items.filter((item) => isSameDay(new Date(item.at), day));
-            const inCurrentScope = isSameMonth(day, referenceDate) || mode === "week";
-            const isToday = toJakartaDateKey(day) === todayKey;
             const dayKey = toJakartaDateKey(day);
+            const dayItems = itemMap.get(dayKey) ?? [];
+            const inCurrentScope = isSameMonth(day, referenceDate) || mode === "week";
+            const isToday = dayKey === todayKey;
             const dayHolidays = holidayMap.get(dayKey) ?? [];
             const primaryHoliday = dayHolidays[0] ?? null;
 

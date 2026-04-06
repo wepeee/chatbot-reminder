@@ -173,6 +173,48 @@ function extractReminderTitle(normalizedText: string) {
   return tail.length > 0 ? `Pengingat: ${tail}` : "Pengingat";
 }
 
+const RECURRING_WEEKDAY_PATTERN =
+  /\b(senin|selasa|rabu|kamis|jum(?:at|'at)|sabtu|minggu|ahad|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi;
+
+function normalizeRecurringWeekday(raw: string) {
+  const lower = raw.toLowerCase();
+
+  if (lower === "monday") return "senin";
+  if (lower === "tuesday") return "selasa";
+  if (lower === "wednesday") return "rabu";
+  if (lower === "thursday") return "kamis";
+  if (lower === "friday") return "jumat";
+  if (lower === "saturday") return "sabtu";
+  if (lower === "sunday") return "minggu";
+
+  if (lower.includes("jum")) return "jumat";
+  if (lower === "ahad") return "minggu";
+  return lower;
+}
+
+function extractRecurringWeekdayHints(lower: string) {
+  const hints: string[] = [];
+
+  for (const match of lower.matchAll(RECURRING_WEEKDAY_PATTERN)) {
+    const normalized = normalizeRecurringWeekday(match[1] ?? "");
+    const index = match.index ?? -1;
+
+    if (normalized === "minggu" && index >= 0) {
+      const context = lower.slice(Math.max(0, index - 8), index + 14);
+      if (/\bminggu\s+(ini|depan|lalu)\b/.test(context)) {
+        continue;
+      }
+    }
+
+    hints.push(normalized);
+  }
+
+  return Array.from(new Set(hints));
+}
+
+function formatWeekdayLabel(weekday: string) {
+  return weekday.charAt(0).toUpperCase() + weekday.slice(1);
+}
 export function applyParsedFixups(input: {
   parsed: ParsedMessage;
   normalizedText: string;
@@ -190,6 +232,8 @@ export function applyParsedFixups(input: {
   const recurringLike = /\b(setiap|tiap)\b/.test(lower);
   const eventLike =
     /\b(kuliah|kelas|rapat|meeting|event|acara|praktikum|lab)\b/.test(lower);
+
+  const weekdayHints = extractRecurringWeekdayHints(lower);
 
   let parsed = input.parsed;
 
@@ -295,6 +339,38 @@ export function applyParsedFixups(input: {
     }
   }
 
+  if (
+    parsed.intent === "create_recurring_reminder" &&
+    weekdayHints.length > 0 &&
+    (recurringLike || parsed.recurrence?.frequency === "daily")
+  ) {
+    const inferredRecurrence = {
+      frequency: "weekly" as const,
+      interval_value: parsed.recurrence?.interval_value ?? 1,
+      by_day: weekdayHints,
+      by_month_day: null,
+      start_date: parsed.recurrence?.start_date ?? null,
+      end_date: parsed.recurrence?.end_date ?? null,
+      raw_rule_text: parsed.recurrence?.raw_rule_text ?? input.normalizedText,
+    };
+
+    parsed = {
+      ...parsed,
+      recurrence: inferredRecurrence,
+    };
+
+    if (typeof parsed.title === "string" && /\bsetiap\s+hari\b/i.test(parsed.title)) {
+      const weekdayLabel =
+        weekdayHints.length === 1
+          ? formatWeekdayLabel(weekdayHints[0])
+          : weekdayHints.map((day) => formatWeekdayLabel(day)).join("/");
+
+      parsed = {
+        ...parsed,
+        title: parsed.title.replace(/\bsetiap\s+hari\b/i, `Setiap ${weekdayLabel}`),
+      };
+    }
+  }
   const hasRelativeDateAnchor =
     /\bhari\s+ini\b|\bbesok\b|\blusa\b/.test(lower) ||
     /\b\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{2,4})?\b/.test(lower);
@@ -322,3 +398,4 @@ export function applyParsedFixups(input: {
 
   return parsed;
 }
+
